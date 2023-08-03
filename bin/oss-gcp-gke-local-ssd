@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+
+export GKE_CLUSTER_NAME=yugabyte
+export GKE_ZONE=asia-southeast1-a
+
+function create-gke(){
+  gcloud container clusters create $GKE_CLUSTER_NAME --zone $GKE_ZONE
+}
+function destroy-gke(){
+  gcloud container clusters delete $GKE_CLUSTER_NAME --zone $GKE_ZONE
+}
+
+function create-gke-nodepool(){
+    gcloud container node-pools create node-pool-8cpu-2ssd \
+        --cluster=$GKE_CLUSTER_NAME \
+        --local-ssd-count=2 \
+        --machine-type=n1-standard-8 \
+        --num-nodes=3 \
+        --zone=$GKE_ZONE
+
+  gcloud container node-pools list --cluster $GKE_CLUSTER_NAME --zone=$GKE_ZONE
+
+  gcloud container node-pools describe node-pool-8cpu-2ssd --cluster $GKE_CLUSTER_NAME --zone=$GKE_ZONE
+}
+function destroy-gke-nodepool(){
+   gcloud container node-pools delete node-pool-8cpu-2ssd \
+        --cluster=$GKE_CLUSTER_NAME \
+        --zone=$GKE_ZONE \
+        --quiet
+}
+
+function get-gke-credentials(){
+  gcloud container clusters get-credentials $GKE_CLUSTER_NAME --zone $GKE_ZONE
+}
+
+function deploy-yb(){
+
+  kubectl apply -f https://raw.githubusercontent.com/yugabyte/yugabyte-db/master/cloud/kubernetes/yugabyte-statefulset-local-ssd-gke.yaml
+  kubectl wait --for=condition=Ready pods  -l app=yb-master
+  kubectl wait --for=condition=Ready pods  -l app=yb-tserver
+  kubectl exec -it yb-master-0 -c yb-master -- yb-admin  -init_master_addrs yb-master-0.yb-masters modify_placement_info cloud1.datacenter1.rack1 3
+}
+
+function undeploy-yb(){
+  kubectl delete -f https://raw.githubusercontent.com/yugabyte/yugabyte-db/master/cloud/kubernetes/yugabyte-statefulset-local-ssd-gke.yaml
+}
+
+function yb-info(){
+  cat <<EOF
+Master UI    : $(kubectl get svc yb-master-ui -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+TServer IP   : $(kubectl get svc yb-db-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+YSQLSH       : ysqlsh -h $(kubectl get svc yb-db-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+YSQLSH k8s   : kubectl exec -it yb-tserver-0  -c yb-tserver  -- ysqlsh
+YCQLSH       : ycqlsh $(kubectl get svc yb-db-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+YCQLSH k8s   : kubectl exec -it yb-tserver-0  -c yb-tserver  -- ycqlsh
+EOF
+}
+
+function ysqlsh(){
+  kubectl exec -it yb-tserver-0  -c yb-tserver  -- ysqlsh $@
+}
+
+function start(){
+  create-gke
+  create-gke-nodepool
+  get-gke-credentials
+  deploy-yb
+  yb-info
+}
+function stop(){
+  undeploy-yb
+  destroy-gke-nodepool
+  destroy-gke
+}
+OP=$1; shift
+$OP "$@"
+
+
+
+
