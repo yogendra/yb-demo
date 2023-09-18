@@ -1,0 +1,36 @@
+{
+  "sqltools.connections": [
+    {
+      "server": "127.0.0.1",
+      "port": 9042,
+      "previewLimit": 50,
+      "driver": "Cassandra",
+      "name": "ycql-local",
+      "group": "Local",
+      "username": "cassandra",
+      "password": ""
+    },
+    {
+      "previewLimit": 50,
+      "server": "localhost",
+      "port": 5433,
+      "driver": "PostgreSQL",
+      "name": "ysql-local",
+      "group": "Local",
+      "database": "",
+      "username": "yugabyte",
+      "password": ""
+    },
+    {
+      "previewLimit": 50,
+      "server": "localhost",
+      "port": 5432,
+      "driver": "PostgreSQL",
+      "name": "postgres@localhost",
+      "group": "Local",
+      "database": "yugabyte",
+      "username": "yugabyte",
+      "password": ""
+    }
+  ]
+}
