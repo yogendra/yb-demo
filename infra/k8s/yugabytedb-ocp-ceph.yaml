@@ -1,0 +1,923 @@
+---
+# Source: yugabyte/templates/service.yaml
+apiVersion: policy/v1beta1
+kind: PodDisruptionBudget
+metadata:
+  name: yb-master-pdb
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: "yb-master"
+---
+# Source: yugabyte/templates/service.yaml
+apiVersion: policy/v1beta1
+kind: PodDisruptionBudget
+metadata:
+  name: yb-tserver-pdb
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: "yb-tserver"
+---
+# Source: yugabyte/templates/debug_config_map.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: release-name-yugabyte-master-hooks
+  namespace: "ydb"
+data:
+  yb-master-0-pre_debug_hook.sh: "echo 'hello-from-pre' "
+  yb-master-0-post_debug_hook.sh: "echo 'hello-from-post' "
+  yb-master-1-pre_debug_hook.sh: "echo 'hello-from-pre' "
+  yb-master-1-post_debug_hook.sh: "echo 'hello-from-post' "
+  yb-master-2-pre_debug_hook.sh: "echo 'hello-from-pre' "
+  yb-master-2-post_debug_hook.sh: "echo 'hello-from-post' "
+---
+# Source: yugabyte/templates/debug_config_map.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: release-name-yugabyte-tserver-hooks
+  namespace: "ydb"
+data:
+  yb-tserver-0-pre_debug_hook.sh: "echo 'hello-from-pre' "
+  yb-tserver-0-post_debug_hook.sh: "echo 'hello-from-post' "
+  yb-tserver-1-pre_debug_hook.sh: "echo 'hello-from-pre' "
+  yb-tserver-1-post_debug_hook.sh: "echo 'hello-from-post' "
+  yb-tserver-2-pre_debug_hook.sh: "echo 'hello-from-pre' "
+  yb-tserver-2-post_debug_hook.sh: "echo 'hello-from-post' "
+---
+# Source: yugabyte/templates/setup-credentials-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: release-name-yugabyte-setup-credentials-script
+  namespace: "ydb"
+  labels:
+    release: "release-name"
+    chart: "yugabyte"
+    component: "yugabytedb"
+data:
+  setup-credentials.sh: |
+    #!/bin/bash
+
+    set -eo pipefail
+
+    # Setup script to setup credentials
+
+    # -----------------------------------------
+    # Default Variables
+    # -----------------------------------------
+
+    readonly DEFAULT_YSQL_USER="yugabyte"
+    readonly DEFAULT_YSQL_PASSWORD="yugabyte"
+    readonly DEFAULT_YSQL_DB="yugabyte"
+
+    readonly DEFAULT_YCQL_USER="cassandra"
+    readonly DEFAULT_YCQL_PASSWORD="cassandra"
+        readonly YSQL_PORT=5433
+        # TODO: Update the tcp-yql-port to tcp-ycql-port in values.yaml
+        readonly YCQL_PORT=9042
+
+    prefix_ysql_cmd=(
+      /home/yugabyte/bin/ysqlsh -h yb-tservers.ydb.svc.cluster.local
+      -p "$YSQL_PORT"
+    )
+
+    prefix_ycql_cmd=(
+      /home/yugabyte/bin/ycqlsh yb-tservers.ydb.svc.cluster.local
+      "$YCQL_PORT"
+    )
+
+    # -----------------------------------------
+    # Variables
+    # -----------------------------------------
+
+    ysql_user=
+    ysql_password=
+    ysql_db=
+    ycql_user=
+    ycql_password=
+    ycql_keyspace=
+
+    # -----------------------------------------
+    # Hepler functions
+    # -----------------------------------------
+
+    cleanup() {
+      local exit_code=$?
+      echo "Exiting with code $exit_code"
+      exit "$exit_code"
+    }
+
+    function waitUntilHealthy() {
+      declare -a ysql_cmd
+      export PGPASSWORD="$2"
+      ysql_cmd=(
+        /home/yugabyte/bin/ysqlsh -h yb-tservers.ydb.svc.cluster.local
+        -p "$3"
+        -U "$1"
+        -c "\\conninfo"
+      )
+
+      if [[ "$4" == "true" ]]; then
+        ysql_cmd+=("sslmode=require")
+      fi
+
+      echo "${ysql_cmd[@]}"
+      while ! "${ysql_cmd[@]}"; do
+        sleep 5s
+      done
+    }
+
+    export -f waitUntilHealthy
+
+    get_ysql_credentials() {
+      [[ -n "$YSQL_USER" ]] && ysql_user="$YSQL_USER" || ysql_user="$DEFAULT_YSQL_USER"
+
+      [[ -n "$YSQL_PASSWORD" ]] && ysql_password="$YSQL_PASSWORD"
+
+      if [[ -z "$YSQL_PASSWORD" ]] && [[ "$ysql_user" != "$DEFAULT_YSQL_USER" ]]; then
+        ysql_password="$YSQL_USER"
+      fi
+
+      [[ -n "$YSQL_DB" ]] && ysql_db="$YSQL_DB"
+
+      [[ -z "$YSQL_DB" ]] && [[ -n "$YSQL_USER" ]] && ysql_db="$ysql_user"
+
+      api="ysql"
+    }
+
+    get_ycql_credentials() {
+      [[ -n "$YCQL_USER" ]] && ycql_user="$YCQL_USER" || ycql_user="$DEFAULT_YCQL_USER"
+
+      [[ -n "$YCQL_PASSWORD" ]] && ycql_password="$YCQL_PASSWORD"
+
+      if [[ -z "$YCQL_PASSWORD" ]] && [[ "$ycql_user" != "$DEFAULT_YCQL_USER" ]]; then
+        ycql_password="$YCQL_USER"
+      fi
+
+      [[ -n "$YCQL_KEYSPACE" ]] && ycql_keyspace="$YCQL_KEYSPACE"
+
+      [[ -z "$YCQL_KEYSPACE" ]] && [[ -n "$YCQL_USER" ]] && ycql_keyspace="$ycql_user"
+
+      api="ycql"
+    }
+
+    create_user() {
+      declare -a ysql_cmd
+      declare -a ycql_cmd
+
+      case "$api" in
+      "ysql")
+        export PGPASSWORD="$DEFAULT_YSQL_PASSWORD"
+        read -r -a ysql_cmd <<< "${prefix_ysql_cmd[@]}"
+        ysql_cmd+=(
+          -U "$DEFAULT_YSQL_USER"
+          -c "CREATE ROLE ${ysql_user} with LOGIN SUPERUSER password '${ysql_password}' ;"
+          -c "ALTER DATABASE ${ysql_db} OWNER TO ${ysql_user} ;"
+        )
+        "${ysql_cmd[@]}"
+      ;;
+      "ycql")
+        read -r -a ycql_cmd <<< "${prefix_ycql_cmd[@]}"
+        ycql_cmd+=(
+          -u "$DEFAULT_YCQL_USER"
+          -p "$DEFAULT_YCQL_PASSWORD"
+          -e "CREATE ROLE IF NOT EXISTS ${ycql_user} WITH PASSWORD = '${ycql_password}' AND LOGIN = true AND SUPERUSER = true ;"
+        )
+        "${ycql_cmd[@]}"
+      ;;
+      *) exit 1
+      esac
+    }
+
+    update_password() {
+      declare -a ysql_cmd
+      declare -a ycql_cmd
+
+      case "$api" in
+      "ysql")
+        export PGPASSWORD="$DEFAULT_YSQL_PASSWORD"
+        read -r -a ysql_cmd <<< "${prefix_ysql_cmd[@]}"
+        ysql_cmd+=(
+          -U "$DEFAULT_YSQL_USER"
+          -c "ALTER ROLE ${ysql_user} WITH PASSWORD '${ysql_password}' ;"
+        )
+        "${ysql_cmd[@]}"
+      ;;
+      "ycql")
+        read -r -a ycql_cmd <<< "${prefix_ycql_cmd[@]}"
+        ycql_cmd+=(
+          -u "$DEFAULT_YCQL_USER"
+          -p "$DEFAULT_YCQL_PASSWORD"
+          -e "ALTER ROLE ${ycql_user} WITH PASSWORD = '${ycql_password}' ;"
+        )
+        "${ycql_cmd[@]}"
+      ;;
+      *) exit 1
+      esac
+    }
+
+    create_container() {
+      declare -a ysql_cmd
+      declare -a ycql_cmd
+
+      case "$api" in
+        "ysql")
+          export PGPASSWORD="$DEFAULT_YSQL_PASSWORD"
+          read -r -a ysql_cmd <<< "${prefix_ysql_cmd[@]}"
+          ysql_cmd+=(
+            -U "$DEFAULT_YSQL_USER"
+            -c "CREATE DATABASE ${ysql_db} ;"
+          )
+          "${ysql_cmd[@]}"
+        ;;
+        "ycql")
+          read -r -a ycql_cmd <<< "${prefix_ycql_cmd[@]}"
+          ycql_cmd+=(
+            -u "$DEFAULT_YCQL_USER"
+            -p "$DEFAULT_YCQL_PASSWORD"
+            -e "CREATE KEYSPACE IF NOT EXISTS ${ycql_keyspace} ;"
+          )
+          "${ycql_cmd[@]}"
+        ;;
+        *) exit 1
+      esac
+    }
+
+    # -----------------------------------------
+    # Main
+    # -----------------------------------------
+
+    trap cleanup EXIT
+
+    echo "Waiting for YugabyteDB to start."
+    if ! timeout 3m bash -c "waitUntilHealthy ${DEFAULT_YSQL_USER} ${DEFAULT_YSQL_PASSWORD} ${YSQL_PORT} false"; then
+      echo "Timeout while waiting for database"
+      exit 1
+    fi
+
+    # YSQL Credentials
+    get_ysql_credentials
+
+    ## Create YSQL DB
+    if [[ -n $ysql_db ]] && [[ "$ysql_db" != "$DEFAULT_YSQL_DB" ]]; then
+      create_container
+    fi
+
+    ## Update YSQL Password
+    if [[ -n $ysql_password ]] && [[ "$ysql_password" != "$DEFAULT_YSQL_PASSWORD" ]] && [[ "$ysql_user" == "$DEFAULT_YSQL_USER" ]]; then
+      update_password
+    fi
+
+    ## Create YSQL User
+    if [[ -n $ysql_user ]] && [[ "$ysql_user" != "$DEFAULT_YSQL_USER" ]]; then
+      create_user
+    fi
+
+    # YCQL Credentials
+    get_ycql_credentials
+
+    ## Create YCQL Keyspace
+    if [[ -n $ycql_keyspace ]] && [[ -n "$ycql_keyspace" ]]; then
+      create_container
+    fi
+
+    ## Update YCQL Password
+    if [[ -n $ycql_password ]] && [[ "$ycql_password" != "$DEFAULT_YCQL_PASSWORD" ]] && [[ "$ycql_user" == "$DEFAULT_YCQL_USER" ]]; then
+      update_password
+    fi
+
+    ## Create YCQL User
+    if [[ -n $ycql_user ]] && [[ "$ycql_user" != "$DEFAULT_YCQL_USER" ]]; then
+      create_user
+    fi
+---
+# Source: yugabyte/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: "yb-masters"
+  labels:
+    app: "yb-master"
+    heritage: "Helm"
+    release: "release-name"
+    chart: "yugabyte"
+    component: "yugabytedb"
+    service-type: "headless"
+spec:
+  clusterIP: None
+  ports:
+    - name: "http-ui"
+      port: 7000
+    - name: "tcp-rpc-port"
+      port: 7100
+  selector:
+    app: "yb-master"
+---
+# Source: yugabyte/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: "yb-tservers"
+  labels:
+    app: "yb-tserver"
+    heritage: "Helm"
+    release: "release-name"
+    chart: "yugabyte"
+    component: "yugabytedb"
+    service-type: "headless"
+spec:
+  clusterIP: None
+  ports:
+    - name: "http-ui"
+      port: 9000
+    - name: "http-ycql-met"
+      port: 12000
+    - name: "http-yedis-met"
+      port: 11000
+    - name: "http-ysql-met"
+      port: 13000
+    - name: "tcp-rpc-port"
+      port: 9100
+    - name: "tcp-yedis-port"
+      port: 6379
+    - name: "tcp-yql-port"
+      port: 9042
+    - name: "tcp-ysql-port"
+      port: 5433
+  selector:
+    app: "yb-tserver"
+---
+# Source: yugabyte/templates/service.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: "yb-master"
+  namespace: "ydb"
+  labels:
+    app: "yb-master"
+    heritage: "Helm"
+    release: "release-name"
+    chart: "yugabyte"
+    component: "yugabytedb"
+spec:
+  serviceName: "yb-masters"
+  podManagementPolicy: Parallel
+
+  replicas: 3
+
+  volumeClaimTemplates:
+    - metadata:
+        name: datadir0
+        labels:
+          heritage: "Helm"
+          release: "release-name"
+          chart: "yugabyte"
+          component: "yugabytedb"
+      spec:
+        accessModes:
+          - "ReadWriteOnce"
+        storageClassName: ocs-storagecluster-ceph-rbd
+        resources:
+          requests:
+            storage: 10Gi
+    - metadata:
+        name: datadir1
+        labels:
+          heritage: "Helm"
+          release: "release-name"
+          chart: "yugabyte"
+          component: "yugabytedb"
+      spec:
+        accessModes:
+          - "ReadWriteOnce"
+        storageClassName: ocs-storagecluster-ceph-rbd
+        resources:
+          requests:
+            storage: 10Gi
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0
+  selector:
+    matchLabels:
+      app: "yb-master"
+  template:
+    metadata:
+      labels:
+        app: "yb-master"
+        heritage: "Helm"
+        release: "release-name"
+        chart: "yugabyte"
+        component: "yugabytedb"
+    spec: # yb-masters
+      terminationGracePeriodSeconds: 300
+      affinity:
+        # Set the anti-affinity selector scope to YB masters.
+
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - "yb-master"
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: "yb-master"
+        image: "quay.io/yogendra/yugabyte-ubi:2.19.0.0-b190"
+        imagePullPolicy: IfNotPresent
+        lifecycle:
+          postStart:
+            exec:
+              command:
+                - "bash"
+                - "-c"
+                - >
+                  mkdir -p /mnt/disk0/cores;
+                  mkdir -p /mnt/disk0/yb-data/scripts;
+                  if [ ! -f /mnt/disk0/yb-data/scripts/log_cleanup.sh ]; then
+                    if [ -f /home/yugabyte/bin/log_cleanup.sh ]; then
+                      cp /home/yugabyte/bin/log_cleanup.sh /mnt/disk0/yb-data/scripts;
+                    fi;
+                  fi
+        livenessProbe:
+          exec:
+            command:
+            - bash
+            - -c
+            - touch "/mnt/disk0/disk.check" "/mnt/disk1/disk.check"
+          failureThreshold: 3
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 1
+        env:
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: HOSTNAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: YBDEVOPS_CORECOPY_DIR
+          value: "/mnt/disk0/cores"
+
+        resources:
+          limits:
+            cpu: 500m
+            memory: 1Gi
+          requests:
+            cpu: 500m
+            memory: 1Gi
+
+        # core dumps are collected to workingDir if
+        # kernel.core_pattern is set to a relative path like
+        # core.%e.%p.%t ref:
+        # https://github.com/yugabyte/charts/issues/11
+        workingDir: "/mnt/disk0/cores"
+        command:
+          - "/sbin/tini"
+          - "--"
+        args:
+          - "/bin/bash"
+          - "-c"
+          - |
+            if [ -f /home/yugabyte/tools/k8s_preflight.py ]; then
+              /home/yugabyte/tools/k8s_preflight.py all
+            fi && \
+            touch "/mnt/disk0/disk.check" "/mnt/disk1/disk.check" && \
+            if [ -f /home/yugabyte/tools/k8s_preflight.py ]; then
+              PYTHONUNBUFFERED="true" /home/yugabyte/tools/k8s_preflight.py \
+                dnscheck \
+                --addr="$(HOSTNAME).yb-masters.$(NAMESPACE).svc.cluster.local" \
+                --port="7100"
+            fi && \
+
+            if [ -f /home/yugabyte/tools/k8s_preflight.py ]; then
+              PYTHONUNBUFFERED="true" /home/yugabyte/tools/k8s_preflight.py \
+                dnscheck \
+                --addr="$(HOSTNAME).yb-masters.$(NAMESPACE).svc.cluster.local:7100" \
+                --port="7100"
+            fi && \
+
+            if [ -f /home/yugabyte/tools/k8s_preflight.py ]; then
+              PYTHONUNBUFFERED="true" /home/yugabyte/tools/k8s_preflight.py \
+                dnscheck \
+                --addr="0.0.0.0" \
+                --port="7000"
+            fi && \
+
+            if [[ -f /home/yugabyte/tools/k8s_parent.py ]]; then
+              k8s_parent="/home/yugabyte/tools/k8s_parent.py"
+            else
+              k8s_parent=""
+            fi && \
+            exec ${k8s_parent} /home/yugabyte/bin/yb-master \
+              --fs_data_dirs=/mnt/disk0,/mnt/disk1 \
+              --master_addresses=yb-master-0.yb-masters.$(NAMESPACE).svc.cluster.local:7100,yb-master-1.yb-masters.$(NAMESPACE).svc.cluster.local:7100,yb-master-2.yb-masters.$(NAMESPACE).svc.cluster.local:7100 \
+              --replication_factor=3 \
+              --enable_ysql=true \
+              --metric_node_name=$(HOSTNAME) \
+              --memory_limit_hard_bytes=912261120 \
+              --stderrthreshold=0 \
+              --num_cpus=0 \
+              --undefok=num_cpus,enable_ysql \
+              --default_memory_limit_to_ram_ratio="0.85" \
+              --rpc_bind_addresses=$(HOSTNAME).yb-masters.$(NAMESPACE).svc.cluster.local \
+              --server_broadcast_addresses=$(HOSTNAME).yb-masters.$(NAMESPACE).svc.cluster.local:7100 \
+              --webserver_interface=0.0.0.0
+        ports:
+          - containerPort: 7000
+            name: "http-ui"
+          - containerPort: 7100
+            name: "tcp-rpc-port"
+        volumeMounts:
+          - name: debug-hooks-volume
+            mountPath: /opt/debug_hooks_config
+
+          - name: datadir0
+            mountPath: /mnt/disk0
+          - name: datadir1
+            mountPath: /mnt/disk1
+      - name: yb-cleanup
+        image: "quay.io/yogendra/yugabyte-ubi:2.19.0.0-b190"
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: USER
+          value: "yugabyte"
+        command:
+          - "/sbin/tini"
+          - "--"
+        args:
+          - "/bin/bash"
+          - "-c"
+          - >
+            while true; do
+              sleep 3600;
+              /home/yugabyte/scripts/log_cleanup.sh;
+            done
+        volumeMounts:
+          - name: datadir0
+            mountPath: /home/yugabyte/
+            subPath: yb-data
+          - name: datadir0
+            mountPath: /var/yugabyte/cores
+            subPath: cores
+
+      volumes:
+        - name: debug-hooks-volume
+          configMap:
+            name: release-name-yugabyte-master-hooks
+            defaultMode: 0755
+
+        - name: datadir0
+          hostPath:
+            path: /mnt/disks/ssd0
+        - name: datadir1
+          hostPath:
+            path: /mnt/disks/ssd1
+---
+# Source: yugabyte/templates/service.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: "yb-tserver"
+  namespace: "ydb"
+  labels:
+    app: "yb-tserver"
+    heritage: "Helm"
+    release: "release-name"
+    chart: "yugabyte"
+    component: "yugabytedb"
+spec:
+  serviceName: "yb-tservers"
+  podManagementPolicy: Parallel
+
+  replicas: 3
+
+  volumeClaimTemplates:
+    - metadata:
+        name: datadir0
+        labels:
+          heritage: "Helm"
+          release: "release-name"
+          chart: "yugabyte"
+          component: "yugabytedb"
+      spec:
+        accessModes:
+          - "ReadWriteOnce"
+        storageClassName: ocs-storagecluster-ceph-rbd
+        resources:
+          requests:
+            storage: 10Gi
+    - metadata:
+        name: datadir1
+        labels:
+          heritage: "Helm"
+          release: "release-name"
+          chart: "yugabyte"
+          component: "yugabytedb"
+      spec:
+        accessModes:
+          - "ReadWriteOnce"
+        storageClassName: ocs-storagecluster-ceph-rbd
+        resources:
+          requests:
+            storage: 10Gi
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0
+  selector:
+    matchLabels:
+      app: "yb-tserver"
+  template:
+    metadata:
+      labels:
+        app: "yb-tserver"
+        heritage: "Helm"
+        release: "release-name"
+        chart: "yugabyte"
+        component: "yugabytedb"
+    spec: # yb-tservers
+      terminationGracePeriodSeconds: 300
+      affinity:
+        # Set the anti-affinity selector scope to YB masters.
+
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - "yb-tserver"
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: "yb-tserver"
+        image: "quay.io/yogendra/yugabyte-ubi:2.19.0.0-b190"
+        imagePullPolicy: IfNotPresent
+        lifecycle:
+          postStart:
+            exec:
+              command:
+                - "bash"
+                - "-c"
+                - >
+                  mkdir -p /mnt/disk0/cores;
+                  mkdir -p /mnt/disk0/yb-data/scripts;
+                  if [ ! -f /mnt/disk0/yb-data/scripts/log_cleanup.sh ]; then
+                    if [ -f /home/yugabyte/bin/log_cleanup.sh ]; then
+                      cp /home/yugabyte/bin/log_cleanup.sh /mnt/disk0/yb-data/scripts;
+                    fi;
+                  fi
+        livenessProbe:
+          exec:
+            command:
+            - bash
+            - -c
+            - touch "/mnt/disk0/disk.check" "/mnt/disk1/disk.check"
+          failureThreshold: 3
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 1
+        env:
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: HOSTNAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: YBDEVOPS_CORECOPY_DIR
+          value: "/mnt/disk0/cores"
+
+        resources:
+          limits:
+            cpu: 500m
+            memory: 1Gi
+          requests:
+            cpu: 500m
+            memory: 1Gi
+
+        # core dumps are collected to workingDir if
+        # kernel.core_pattern is set to a relative path like
+        # core.%e.%p.%t ref:
+        # https://github.com/yugabyte/charts/issues/11
+        workingDir: "/mnt/disk0/cores"
+        command:
+          - "/sbin/tini"
+          - "--"
+        args:
+          - "/bin/bash"
+          - "-c"
+          - |
+            if [ -f /home/yugabyte/tools/k8s_preflight.py ]; then
+              /home/yugabyte/tools/k8s_preflight.py all
+            fi && \
+            touch "/mnt/disk0/disk.check" "/mnt/disk1/disk.check" && \
+            if [ -f /home/yugabyte/tools/k8s_preflight.py ]; then
+              PYTHONUNBUFFERED="true" /home/yugabyte/tools/k8s_preflight.py \
+                dnscheck \
+                --addr="$(HOSTNAME).yb-tservers.$(NAMESPACE).svc.cluster.local" \
+                --port="9100"
+            fi && \
+
+            if [ -f /home/yugabyte/tools/k8s_preflight.py ]; then
+              PYTHONUNBUFFERED="true" /home/yugabyte/tools/k8s_preflight.py \
+                dnscheck \
+                --addr="$(HOSTNAME).yb-tservers.$(NAMESPACE).svc.cluster.local:9100" \
+                --port="9100"
+            fi && \
+
+            if [ -f /home/yugabyte/tools/k8s_preflight.py ]; then
+              PYTHONUNBUFFERED="true" /home/yugabyte/tools/k8s_preflight.py \
+                dnscheck \
+                --addr="0.0.0.0" \
+                --port="9000"
+            fi && \
+
+            if [[ -f /home/yugabyte/tools/k8s_parent.py ]]; then
+              k8s_parent="/home/yugabyte/tools/k8s_parent.py"
+            else
+              k8s_parent=""
+            fi && \
+            if [ -f /home/yugabyte/tools/k8s_preflight.py ]; then
+              PYTHONUNBUFFERED="true" /home/yugabyte/tools/k8s_preflight.py \
+                dnscheck \
+                --addr="$(HOSTNAME).yb-tservers.$(NAMESPACE).svc.cluster.local" \
+                --port="9042"
+            fi && \
+
+            if [ -f /home/yugabyte/tools/k8s_preflight.py ]; then
+              PYTHONUNBUFFERED="true" /home/yugabyte/tools/k8s_preflight.py \
+                dnscheck \
+                --addr="0.0.0.0:5433" \
+                --port="5433"
+            fi && \
+
+            exec ${k8s_parent} /home/yugabyte/bin/yb-tserver \
+              --fs_data_dirs=/mnt/disk0,/mnt/disk1 \
+              --tserver_master_addrs=yb-master-0.yb-masters.$(NAMESPACE).svc.cluster.local:7100,yb-master-1.yb-masters.$(NAMESPACE).svc.cluster.local:7100,yb-master-2.yb-masters.$(NAMESPACE).svc.cluster.local:7100 \
+              --metric_node_name=$(HOSTNAME) \
+              --memory_limit_hard_bytes=912261120 \
+              --stderrthreshold=0 \
+              --num_cpus=0 \
+              --undefok=num_cpus,enable_ysql \
+              --use_node_hostname_for_local_tserver=true \
+              --ysql_enable_auth=true \
+              --use_cassandra_authentication=true \
+              --rpc_bind_addresses=$(HOSTNAME).yb-tservers.$(NAMESPACE).svc.cluster.local \
+              --server_broadcast_addresses=$(HOSTNAME).yb-tservers.$(NAMESPACE).svc.cluster.local:9100 \
+              --webserver_interface=0.0.0.0 \
+              --enable_ysql=true \
+              --pgsql_proxy_bind_address=0.0.0.0:5433 \
+              --cql_proxy_bind_address=$(HOSTNAME).yb-tservers.$(NAMESPACE).svc.cluster.local
+        ports:
+          - containerPort: 9000
+            name: "http-ui"
+          - containerPort: 12000
+            name: "http-ycql-met"
+          - containerPort: 11000
+            name: "http-yedis-met"
+          - containerPort: 13000
+            name: "http-ysql-met"
+          - containerPort: 9100
+            name: "tcp-rpc-port"
+          - containerPort: 6379
+            name: "tcp-yedis-port"
+          - containerPort: 9042
+            name: "tcp-yql-port"
+          - containerPort: 5433
+            name: "tcp-ysql-port"
+        volumeMounts:
+          - name: tserver-tmp
+            mountPath: /tmp
+          - name: debug-hooks-volume
+            mountPath: /opt/debug_hooks_config
+
+          - name: datadir0
+            mountPath: /mnt/disk0
+          - name: datadir1
+            mountPath: /mnt/disk1
+      - name: yb-cleanup
+        image: "quay.io/yogendra/yugabyte-ubi:2.19.0.0-b190"
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: USER
+          value: "yugabyte"
+        command:
+          - "/sbin/tini"
+          - "--"
+        args:
+          - "/bin/bash"
+          - "-c"
+          - >
+            while true; do
+              sleep 3600;
+              /home/yugabyte/scripts/log_cleanup.sh;
+            done
+        volumeMounts:
+          - name: datadir0
+            mountPath: /home/yugabyte/
+            subPath: yb-data
+          - name: datadir0
+            mountPath: /var/yugabyte/cores
+            subPath: cores
+
+      volumes:
+        - name: debug-hooks-volume
+          configMap:
+            name: release-name-yugabyte-tserver-hooks
+            defaultMode: 0755
+        - name: tserver-tmp
+          emptyDir: {}
+
+        - name: datadir0
+          hostPath:
+            path: /mnt/disks/ssd0
+        - name: datadir1
+          hostPath:
+            path: /mnt/disks/ssd1
+---
+# Source: yugabyte/templates/secrets.yaml
+# Create secrets from other namespaces for masters.
+---
+# Source: yugabyte/templates/secrets.yaml
+# Create secrets from other namespaces for tservers.
+---
+# Source: yugabyte/templates/service.yaml
+---
+---
+# Source: yugabyte/templates/hooks/setup-credentials-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: release-name-yugabyte-setup-credentials
+  namespace: "ydb"
+  labels:
+    app: "setup-credentials"
+    release: "release-name"
+    chart: "yugabyte"
+    component: "yugabytedb"
+  annotations:
+    "helm.sh/hook": post-install
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": hook-succeeded
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      name: "setup-credentials"
+      labels:
+        app: "setup-credentials"
+        release: "release-name"
+        chart: "yugabyte"
+        component: "yugabytedb"
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: setup-credentials
+        image: "quay.io/yogendra/yugabyte-ubi:2.19.0.0-b190"
+        env:
+        - name: YSQL_USER
+          value: "yugabyte"
+        - name: YSQL_PASSWORD
+          value: "yugabyte"
+        - name: YSQL_DB
+          value: "yugabyte"
+        - name: YCQL_USER
+          value: "yugabyte"
+        - name: YCQL_PASSWORD
+          value: "yugabyte"
+        - name: YCQL_KEYSPACE
+          value: "yugabyte"
+        command:
+        - 'bash'
+        - '/home/yugabyte/bin/setup-credentials/setup-credentials.sh'
+        volumeMounts:
+        - name: setup-credentials-script
+          mountPath: "/home/yugabyte/bin/setup-credentials"
+      volumes:
+      - name: setup-credentials-script
+        configMap:
+          name: release-name-yugabyte-setup-credentials-script
