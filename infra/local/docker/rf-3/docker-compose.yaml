@@ -1,0 +1,76 @@
+services:
+  yugabyted-0:
+    container_name: yugabyted-0
+    hostname: yugabyted-0.local
+    image: yogendra/yugabyte:2.19.3.0-b140
+    command:
+    - sh
+    - -c
+    - |
+      bin/yugabyted start --advertise_address=yugabyted-0.local --cloud_location=cloud.region.zone1 --fault_tolerance=zone --tserver_flags="ysql_enable_packed_row=true,ysql_beta_features=true,yb_enable_read_committed_isolation=true,enable_deadlock_detection=true,enable_wait_queues=true" --master_flags="ysql_enable_packed_row=true,ysql_beta_features=true" --daemon=false
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "7000:7000"
+      - "9000:9000"
+      - "5433:5433"
+      - "15433:15433"
+    healthcheck:
+      test: curl -f http://yugabyted-0.local:7000
+      start_interval: 5s
+      interval: 2s
+      timeout: 1s
+      retries: 30
+  yugabyted-1:
+    container_name: yugabyted-1
+    hostname: yugabyted-1.local
+    image: yogendra/yugabyte:2.19.3.0-b140
+    command:
+    - sh
+    - -c
+    - |
+      bin/yugabyted start --advertise_address=yugabyted-1.local --cloud_location=cloud.region.zone2 --fault_tolerance=zone --tserver_flags="ysql_enable_packed_row=true,ysql_beta_features=true,yb_enable_read_committed_isolation=true,enable_deadlock_detection=true,enable_wait_queues=true" --master_flags="ysql_enable_packed_row=true,ysql_beta_features=true" --daemon=false --join=yugabyted-0.local
+  # bin/yugabyted configure data_placement --constraint_value=cloud.region.zone1,cloud.region.zone2,cloud.region.zone3 --fault_tolerance=zone --rf=3
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "7001:7000"
+      - "9001:9000"
+      - "5434:5433"
+    depends_on:
+      yugabyted-0:
+        condition: service_healthy
+    healthcheck:
+     test: curl -f http://yugabyted-1.local:7000
+     start_interval: 5s
+     interval: 2s
+     timeout: 1s
+     retries: 30
+  yugabyted-2:
+    container_name: yugabyted-2
+    hostname: yugabyted-2.local
+    image: yogendra/yugabyte:2.19.3.0-b140
+    command:
+    - sh
+    - -c
+    - |
+      bin/yugabyted start --advertise_address=yugabyted-2.local --cloud_location=cloud.region.zone3 --fault_tolerance=zone --tserver_flags="ysql_enable_packed_row=true,ysql_beta_features=true,yb_enable_read_committed_isolation=true,enable_deadlock_detection=true,enable_wait_queues=true" --master_flags="ysql_enable_packed_row=true,ysql_beta_features=true" --daemon=false --join=yugabyted-0.local
+  # bin/yugabyted configure data_placement --constraint_value=cloud.region.zone1,cloud.region.zone2,cloud.region.zone3 --fault_tolerance=zone --rf=3
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "7002:7000"
+      - "9002:9000"
+      - "5435:5433"
+    depends_on:
+      yugabyted-1:
+        condition: service_healthy
+    healthcheck:
+     test: curl -f http://yugabyted-2.local:7000
+     start_interval: 5s
+     interval: 2s
+     timeout: 1s
+     retries: 30
