@@ -1,14 +1,21 @@
+name: yb-demo
 services:
   wls:
-    container_name: wls
     image: yogendra/yb-workload-simu-app
     environment:
       - SPRING_DATASOURCE_HIKARI_DATA_SOURCE_PROPERTIES_SERVERNAME=yugabytedb-1.local
+      - SPRING_DATASOURCE_HIKARI_DATA_SOURCE_PROPERTIES_TOPOLOGYKEYS=cloud.region.*
+      - SPRING_DATASOURCE_HIKARI_DATA_SOURCE_PROPERTIES_PORTNUMBER=5433
+      - SPRING_DATASOURCE_HIKARI_DATA_SOURCE_PROPERTIES_DATABASENAME=demo
+      - SPRING_DATASOURCE_HIKARI_USERNAME=demo
+      - SPRING_DATASOURCE_HIKARI_PASSWORD=demo
     restart: unless-stopped
     ports:
       - "8080:8080"
     healthcheck:
-      test: curl -f http://wls.local:8080
+      test:
+      - CMD-SHELL
+      - curl -f http://wls.local:8080
       start_interval: 5s
       interval: 2s
       timeout: 1s
@@ -21,47 +28,60 @@ services:
       yugabytedb-3:
         condition: service_healthy
   yugabytedb-1:
-    container_name: yugabytedb-1
     hostname: yugabytedb-1.local
-    image: yogendra/yugabyte:2.19.3.0-b140
+    image: yogendra/yugabyte:2.20.0.0-b76
     command:
     - sh
     - -c
     - |
-      bin/yugabyted start --advertise_address=yugabytedb-1.local --cloud_location=cloud.region.zone1 --fault_tolerance=zone --tserver_flags="ysql_enable_packed_row=true,ysql_beta_features=true,yb_enable_read_committed_isolation=true,enable_deadlock_detection=true,enable_wait_queues=true" --master_flags="ysql_enable_packed_row=true,ysql_beta_features=true" --daemon=false
+      bin/yugabyted start \
+        --advertise_address=yugabytedb-1.local \
+        --cloud_location=cloud.region.zone1 \
+        --fault_tolerance=zone \
+        --tserver_flags="ysql_enable_packed_row=true,ysql_beta_features=true,yb_enable_read_committed_isolation=true,enable_deadlock_detection=true,enable_wait_queues=true" \
+        --master_flags="ysql_enable_packed_row=true,ysql_beta_features=true" \
+        --daemon=false
     restart: unless-stopped
+    volumes:
+      - yugabytedb-1:/root/var
     cap_add:
       - NET_ADMIN
-    ports:
-      - "7000:7000"
-      - "9000:9000"
-      - "5433:5433"
-      - "15433:15433"
+    environment:
+      - YSQL_DATABASE=demo
+      - YSQL_USER=demo
+      - YSQL_PASSWORD=demo
     healthcheck:
       test:
         - CMD-SHELL
         - PGPASSWORD=yugabyte postgres/bin/pg_isready -t 1 -p 5433 -U yugabyte -d yugabyte -q -h yugabytedb-1.local
-      start_interval: 5s
+      start_interval: 10s
       interval: 2s
       timeout: 1s
       retries: 30
   yugabytedb-2:
-    container_name: yugabytedb-2
     hostname: yugabytedb-2.local
-    image: yogendra/yugabyte:2.19.3.0-b140
+    image: yogendra/yugabyte:2.20.0.0-b76
     command:
     - sh
     - -c
     - |
-      bin/yugabyted start --advertise_address=yugabytedb-2.local --cloud_location=cloud.region.zone2 --fault_tolerance=zone --tserver_flags="ysql_enable_packed_row=true,ysql_beta_features=true,yb_enable_read_committed_isolation=true,enable_deadlock_detection=true,enable_wait_queues=true" --master_flags="ysql_enable_packed_row=true,ysql_beta_features=true" --daemon=false --join=yugabytedb-1.local
-  # bin/yugabyted configure data_placement --constraint_value=cloud.region.zone1,cloud.region.zone2,cloud.region.zone3 --fault_tolerance=zone --rf=3
+      bin/yugabyted start \
+        --advertise_address=yugabytedb-2.local \
+        --cloud_location=cloud.region.zone2 \
+        --fault_tolerance=zone \
+        --tserver_flags="ysql_enable_packed_row=true,ysql_beta_features=true,yb_enable_read_committed_isolation=true,enable_deadlock_detection=true,enable_wait_queues=true" \
+        --master_flags="ysql_enable_packed_row=true,ysql_beta_features=true" \
+        --daemon=false \
+        --join=yugabytedb-1.local
     restart: unless-stopped
+    volumes:
+      - yugabytedb-2:/root/var
     cap_add:
       - NET_ADMIN
-    ports:
-      - "7001:7000"
-      - "9001:9000"
-      - "5434:5433"
+    environment:
+      - YSQL_DATABASE=demo
+      - YSQL_USER=demo
+      - YSQL_PASSWORD=demo
     depends_on:
       yugabytedb-1:
         condition: service_healthy
@@ -69,60 +89,126 @@ services:
       test:
         - CMD-SHELL
         - PGPASSWORD=yugabyte postgres/bin/pg_isready -t 1 -p 5433 -U yugabyte -d yugabyte -q -h yugabytedb-2.local
-      start_interval: 5s
+      start_interval: 10s
       interval: 2s
       timeout: 1s
       retries: 30
   yugabytedb-3:
-    container_name: yugabytedb-3
     hostname: yugabytedb-3.local
-    image: yogendra/yugabyte:2.19.3.0-b140
+    image: yogendra/yugabyte:2.20.0.0-b76
     command:
     - sh
     - -c
     - |
-      bin/yugabyted start --advertise_address=yugabytedb-3.local --cloud_location=cloud.region.zone3 --fault_tolerance=zone --tserver_flags="ysql_enable_packed_row=true,ysql_beta_features=true,yb_enable_read_committed_isolation=true,enable_deadlock_detection=true,enable_wait_queues=true" --master_flags="ysql_enable_packed_row=true,ysql_beta_features=true" --daemon=false --join=yugabytedb-1.local
-  # bin/yugabyted configure data_placement --constraint_value=cloud.region.zone1,cloud.region.zone2,cloud.region.zone3 --fault_tolerance=zone --rf=3
+      bin/yugabyted start \
+        --advertise_address=yugabytedb-3.local \
+        --cloud_location=cloud.region.zone3 \
+        --fault_tolerance=zone \
+        --tserver_flags="ysql_enable_packed_row=true,ysql_beta_features=true,yb_enable_read_committed_isolation=true,enable_deadlock_detection=true,enable_wait_queues=true" \
+        --master_flags="ysql_enable_packed_row=true,ysql_beta_features=true" \
+        --daemon=false \
+        --join=yugabytedb-1.local
     restart: unless-stopped
+    volumes:
+      - yugabytedb-3:/root/var
     cap_add:
       - NET_ADMIN
-    ports:
-      - "7002:7000"
-      - "9002:9000"
-      - "5435:5433"
+    environment:
+      - YSQL_DATABASE=demo
+      - YSQL_USER=demo
+      - YSQL_PASSWORD=demo
     depends_on:
+      yugabytedb-1:
+        condition: service_healthy
       yugabytedb-2:
         condition: service_healthy
     healthcheck:
       test:
         - CMD-SHELL
         - PGPASSWORD=yugabyte postgres/bin/pg_isready -t 1 -p 5433 -U yugabyte -d yugabyte -q -h yugabytedb-3.local
-      start_interval: 5s
+      start_interval: 10s
       interval: 2s
       timeout: 1s
       retries: 30
+  db-console:
+    hostname: db-console.local
+    image: yogendra/yugabyte:2.20.0.0-b76
+    restart: unless-stopped
+    command: tail -f /dev/null
   sqlpad:
-    # To use Dockerfile at root of this project, use build instead of image
-    # build: ../../
     image: sqlpad/sqlpad:6.11.2
-    hostname: "sqlpad"
-    container_name: sqlpad
+    hostname: sqlpad.local
     ports:
       - "3000:3000"
+    depends_on:
+      db-lb:
+        condition: service_healthy
     environment:
-      SQLPAD_ADMIN: "admin"
-      SQLPAD_ADMIN_PASSWORD: "passw0rd"
+      SQLPAD_ADMIN: "demo"
+      SQLPAD_ADMIN_PASSWORD: "demo"
       SQLPAD_APP_LOG_LEVEL: info
       SQLPAD_WEB_LOG_LEVEL: warn
-      SQLPAD_CONNECTIONS__yugabytedb__name: YugabtyeDB
-      SQLPAD_CONNECTIONS__yugabytedb__driver: postgres
-      SQLPAD_CONNECTIONS__yugabytedb__host: yugabytedb-1
-      SQLPAD_CONNECTIONS__yugabytedb__database: yugabyte
-      SQLPAD_CONNECTIONS__yugabytedb__username: yugabyte
-      SQLPAD_CONNECTIONS__yugabytedb__password: ''
-      SQLPAD_CONNECTIONS__yugabytedb__multiStatementTransactionEnabled: 'true'
-      SQLPAD_CONNECTIONS__yugabytedb__idleTimeoutSeconds: 86400
+      SQLPAD_ALLOW_CSV_DOWNLOAD: true
+      SQLPAD_CONNECTIONS__yugabyte__name: yugabytedb/yugabyte
+      SQLPAD_CONNECTIONS__yugabyte__driver: postgres
+      SQLPAD_CONNECTIONS__yugabyte__host: db-lb.local
+      SQLPAD_CONNECTIONS__yugabyte__port: 5433
+      SQLPAD_CONNECTIONS__yugabyte__database: yugabyte
+      SQLPAD_CONNECTIONS__yugabyte__username: yugabyte
+      SQLPAD_CONNECTIONS__yugabyte__password: yugabyte
+      SQLPAD_CONNECTIONS__yugabyte__multiStatementTransactionEnabled: true
+      SQLPAD_CONNECTIONS__yugabyte__idleTimeoutSeconds: 86400
+      SQLPAD_CONNECTIONS__demo__name: yugabytedb/demo
+      SQLPAD_CONNECTIONS__demo__driver: postgres
+      SQLPAD_CONNECTIONS__demo__host: db-lb.local
+      SQLPAD_CONNECTIONS__demo__port: 5433
+      SQLPAD_CONNECTIONS__demo__database: demo
+      SQLPAD_CONNECTIONS__demo__username: yugabyte
+      SQLPAD_CONNECTIONS__demo__password: yugabyte
+      SQLPAD_CONNECTIONS__demo__multiStatementTransactionEnabled: true
+      SQLPAD_CONNECTIONS__demo__idleTimeoutSeconds: 86400
+      SQLPAD_CONNECTIONS__pg__name: yugabytedb/pg
+      SQLPAD_CONNECTIONS__pg__driver: postgres
+      SQLPAD_CONNECTIONS__pg__host: db-lb.local
+      SQLPAD_CONNECTIONS__pg__port: 5433
+      SQLPAD_CONNECTIONS__pg__database: postgres
+      SQLPAD_CONNECTIONS__pg__username: yugabyte
+      SQLPAD_CONNECTIONS__pg__password: yugabyte
+      SQLPAD_CONNECTIONS__pg__multiStatementTransactionEnabled: true
+      SQLPAD_CONNECTIONS__pg__idleTimeoutSeconds: 86400
 
-
+  db-lb:
+    image: nginx:1.25.3
+    hostname: db-lb.local
+    restart: always
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+    ports:
+      - "5433:5433/tcp"
+      - "15433:15433/tcp"
+      - "7000:7000/tcp"
+      - "9000:9000/tcp"
+      - "9042:9042/tcp"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl -f http://db-lb.local:15433
+      start_period: 3s
+      interval: 2s
+      timeout: 1s
+      retries: 10
+    depends_on:
+      yugabytedb-1:
+        condition: service_healthy
+      yugabytedb-2:
+        condition: service_healthy
+      yugabytedb-3:
+        condition: service_healthy
+volumes:
+  yugabytedb-1:
+  yugabytedb-2:
+  yugabytedb-3:
+  code-server-local:
+  code-server-config:
 
 
