@@ -204,11 +204,32 @@ services:
         condition: service_healthy
       yugabytedb-3:
         condition: service_healthy
+  demo-nb:
+    image: yogendra/yb-demo-nb
+    build:
+      context: notebook
+    hostname: demo-nb.local
+    restart: always
+    volumes:
+      - ../..:/home/jovyan/work
+    environment:
+      - GRANT_SUDO=yes
+      - NOTEBOOK_ARGS=--PasswordIdentityProvider.hashed_password='argon2:$$argon2id$$v=19$$m=10240,t=10,p=8$$V1fvnM4WG6vgjRELSzVIeQ$$uWX/TQRbEyJ3l3qbyGlIh2kSgKVs0y0dWUk7rV5a4GM'
+    ports:
+      - "8888:8888/tcp"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl -f http://demo-nb.local:8888
+      start_period: 3s
+      interval: 2s
+      timeout: 1s
+      retries: 10
+    depends_on:
+      db-lb:
+        condition: service_healthy
 volumes:
   yugabytedb-1:
   yugabytedb-2:
   yugabytedb-3:
-  code-server-local:
-  code-server-config:
-
 
