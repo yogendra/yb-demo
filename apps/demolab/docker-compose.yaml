@@ -246,6 +246,15 @@ services:
     depends_on:
       db-lb:
         condition: service_healthy
+  logs:
+    hostname: logs.local
+    image: yogendra/yugabyte:2.20.0.0-b76
+    volumes:
+    - ./logs:/tools:ro
+    - yugabytedb-1:/nodes/1:ro
+    - yugabytedb-2:/nodes/2:ro
+    - yugabytedb-3:/nodes/3:ro
+    command: tail -f /dev/null
 volumes:
   yugabytedb-1:
   yugabytedb-2:
