@@ -1,0 +1,185 @@
+version: "3.9"
+networks:
+  ybnet:
+volumes:
+  yugabyted-0:
+  yugabyted-1:
+  yugabyted-2:
+  firefox:
+
+services:
+  yugabyted-0:
+    image: yugabytedb/yugabyte:2.18.0.1-b4
+    platform: linux/amd64
+    networks:
+      - ybnet
+    cap_add:
+      - NET_ADMIN
+    container_name: yugabyted-0
+    hostname: yugabyted-0.local
+    restart: unless-stopped
+    ports:
+      - "7000:7000"
+      - "9000:7000"
+      - "15433:15433"
+      - "5433:5433"
+      - "9042:9042"
+    volumes:
+      - yugabyted-0:/home/yugabyte/yb-data
+    command:
+      - bash
+      - -c
+      - |
+        rm -rf /tmp/.yb* ;
+        bin/yugabyted start \
+          --insecure \
+          --base_dir=/home/yugabyte/yb-data \
+          --advertise_address=yugabyted-0.local \
+          --cloud_location=cloud.region.zone1 \
+          --fault_tolerance=zone \
+          --tserver_flags="ysql_enable_packed_row=true,ysql_beta_features=true,yb_enable_read_committed_isolation=true,enable_deadlock_detection=true,enable_wait_queues=true,follower_unavailable_considered_failed_sec=10" \
+          --master_flags="ysql_enable_packed_row=true,ysql_beta_features=true" \
+          --daemon=false
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://yugabyted-0.local:15433"]
+      start_period: 5s
+      interval: 10s
+      timeout: 5s
+      retries: 3
+  yugabyted-1:
+    image: yugabytedb/yugabyte:2.18.0.1-b4
+    platform: linux/amd64
+    networks:
+      - ybnet
+    cap_add:
+      - NET_ADMIN
+    container_name: yugabyted-1
+    hostname: yugabyted-1.local
+    restart: unless-stopped
+    volumes:
+      - yugabyted-1:/home/yugabyte/yb-data
+    command:
+      - bash
+      - -c
+      - |
+        rm -rf /tmp/.yb* ;
+        bin/yugabyted start \
+          --insecure \
+          --base_dir=/home/yugabyte/yb-data \
+          --advertise_address=yugabyted-1.local \
+          --cloud_location=cloud.region.zone1 \
+          --fault_tolerance=zone \
+          --tserver_flags="ysql_enable_packed_row=true,ysql_beta_features=true,yb_enable_read_committed_isolation=true,enable_deadlock_detection=true,enable_wait_queues=true,follower_unavailable_considered_failed_sec=10" \
+          --master_flags="ysql_enable_packed_row=true,ysql_beta_features=true" \
+          --daemon=false \
+          --ui=false \
+          --join=yugabyted-0.local
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://yugabyted-1.local:7000"]
+      start_period: 5s
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      yugabyted-0:
+        condition: service_healthy
+  yugabyted-2:
+    image: yugabytedb/yugabyte:2.18.0.1-b4
+    platform: linux/amd64
+    networks:
+      - ybnet
+    cap_add:
+      - NET_ADMIN
+    container_name: yugabyted-2
+    hostname: yugabyted-2.local
+    restart: unless-stopped
+    volumes:
+      - yugabyted-2:/home/yugabyte/yb-data
+    command:
+      - bash
+      - -c
+      - |
+        rm -rf /tmp/.yb* ;
+        bin/yugabyted start \
+          --insecure \
+          --base_dir=/home/yugabyte/yb-data \
+          --advertise_address=yugabyted-2.local \
+          --cloud_location=cloud.region.zone1 \
+          --fault_tolerance=zone \
+          --tserver_flags="ysql_enable_packed_row=true,ysql_beta_features=true,yb_enable_read_committed_isolation=true,enable_deadlock_detection=true,enable_wait_queues=true,follower_unavailable_considered_failed_sec=10" \
+          --master_flags="ysql_enable_packed_row=true,ysql_beta_features=true" \
+          --daemon=false \
+          --ui=false \
+          --join=yugabyted-1.local
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://yugabyted-2.local:7000"]
+      start_period: 5s
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      yugabyted-1:
+        condition: service_healthy
+  firefox:
+    image: lscr.io/linuxserver/firefox:latest
+    container_name: firefox
+    networks:
+      - ybnet
+    security_opt:
+      - seccomp:unconfined #optional
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+    volumes:
+      - firefox:/config
+    ports:
+      - 3000:3000
+    shm_size: "1gb"
+    restart: unless-stopped
+  sqlpad:
+    image: sqlpad/sqlpad:6.11.2
+    hostname: sqlpad.local
+    container_name: sqlpad
+    ports:
+      - 3001:3000
+    networks:
+      - ybnet
+    environment:
+      SQLPAD_ADMIN: 'admin'
+      SQLPAD_ADMIN_PASSWORD: 'admin'
+      SQLPAD_APP_LOG_LEVEL: debug
+      SQLPAD_WEB_LOG_LEVEL: warn
+      SQLPAD_SEED_DATA_PATH: /etc/sqlpad/seed-data
+      SQLPAD_CONNECTIONS__yugabyte__name: YugabyteDB demo
+      SQLPAD_CONNECTIONS__yugabyte__driver: postgres
+      SQLPAD_CONNECTIONS__yugabyte__host: yugabyted-0.local
+      SQLPAD_CONNECTIONS__yugabyte__port: 5433
+      SQLPAD_CONNECTIONS__yugabyte__database: yugabyte
+      SQLPAD_CONNECTIONS__yugabyte__username: yugabyte
+      SQLPAD_CONNECTIONS__yugabyte__password: ''
+      SQLPAD_CONNECTIONS__yugabyte__multiStatementTransactionEnabled: 'true'
+      SQLPAD_CONNECTIONS__yugabyte__idleTimeoutSeconds: 86400
+    depends_on:
+      yugabyted-0:
+        condition: service_healthy
+  app:
+    build:
+      context: .
+      dockerfile: demo.Dockerfile
+    container_name: app
+    networks:
+      - ybnet
+    hostname: app.local
+    environment:
+        SPRING_DATASOURCE_HIKARI_DATA_SOURCE_PROPERTIES_SERVERNAME: yugabyted-0.local
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      yugabyted-0:
+        condition: service_healthy
+      yugabyted-1:
+        condition: service_healthy
+      yugabyted-2:
+        condition: service_healthy

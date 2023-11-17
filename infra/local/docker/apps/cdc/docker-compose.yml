@@ -1,0 +1,339 @@
+version: "3.9"
+
+services:
+  yb-master-0:
+    image: yugabytedb/yugabyte:2.18.0.1-b4
+    platform: linux/amd64
+    cap_add:
+      - NET_ADMIN
+    container_name: yb-master-0
+    hostname: yb-master-0.zone.region.cloud
+    restart: unless-stopped
+    ports:
+      - "7000:7000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://yb-master-0"]
+      start_period: 5s
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    command:
+      - bash
+      - -c
+      - |
+        rm -rf /tmp/.yb*
+        /home/yugabyte/bin/yb-master \
+          --ysql_beta_feature_tablespace_alteration=true \
+          --ysql_enable_packed_row=true \
+          --ysql_beta_features=true \
+          --yb_enable_read_committed_isolation=true \
+          --default_memory_limit_to_ram_ratio=0.20 \
+          --fs_data_dirs=/home/yugabyte/data \
+          --placement_cloud=cloud \
+          --placement_region=region \
+          --placement_zone=zone \
+          --rpc_bind_addresses=yb-master-0.zone.region.cloud:7100 \
+          --master_addresses=yb-master-0:7100,yb-master-1:7100,yb-master-2:7100 \
+          --replication_factor=3 \
+          --rpc_connection_timeout_ms=15000
+  yb-master-1:
+    image: yugabytedb/yugabyte:2.18.0.1-b4
+    platform: linux/amd64
+    cap_add:
+      - NET_ADMIN
+    container_name: yb-master-1
+    hostname: yb-master-1.zone.region.cloud
+    restart: unless-stopped
+    ports:
+      - "7001:7000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://yb-master-1"]
+      start_period: 5s
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    command:
+      - bash
+      - -c
+      - |
+        rm -rf /tmp/.yb*
+        /home/yugabyte/bin/yb-master \
+          --ysql_beta_feature_tablespace_alteration=true \
+          --ysql_enable_packed_row=true \
+          --ysql_beta_features=true \
+          --yb_enable_read_committed_isolation=true \
+          --default_memory_limit_to_ram_ratio=0.20 \
+          --fs_data_dirs=/home/yugabyte/data \
+          --placement_cloud=cloud \
+          --placement_region=region \
+          --placement_zone=zone \
+          --rpc_bind_addresses=yb-master-1.zone.region.cloud:7100 \
+          --master_addresses=yb-master-0:7100,yb-master-1:7100,yb-master-2:7100 \
+          --replication_factor=3 \
+          --rpc_connection_timeout_ms=15000
+
+  yb-master-2:
+    image: yugabytedb/yugabyte:2.18.0.1-b4
+    platform: linux/amd64
+    cap_add:
+      - NET_ADMIN
+    container_name: yb-master-2
+    hostname: yb-master-2.zone.region.cloud
+    restart: unless-stopped
+    ports:
+      - "7002:7000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://yb-master-2"]
+      start_period: 5s
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    command:
+      - bash
+      - -c
+      - |
+        rm -rf /tmp/.yb*
+        /home/yugabyte/bin/yb-master \
+          --ysql_beta_feature_tablespace_alteration=true \
+          --ysql_enable_packed_row=true \
+          --ysql_beta_features=true \
+          --yb_enable_read_committed_isolation=true \
+          --default_memory_limit_to_ram_ratio=0.20 \
+          --fs_data_dirs=/home/yugabyte/data \
+          --placement_cloud=cloud \
+          --placement_region=region \
+          --placement_zone=zone \
+          --rpc_bind_addresses=yb-master-2.zone.region.cloud:7100 \
+          --master_addresses=yb-master-0:7100,yb-master-1:7100,yb-master-2:7100 \
+          --replication_factor=3 \
+          --rpc_connection_timeout_ms=15000
+
+  yb-tserver-0:
+    image: yugabytedb/yugabyte:2.18.0.1-b4
+    platform: linux/amd64
+    cap_add:
+      - NET_ADMIN
+    container_name: yb-tserver-0
+    hostname: yb-tserver-0.zone.region.cloud
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "5433:5433"
+    healthcheck:
+      test:
+        ["CMD", "/home/yugabyte/postgres/bin/pg_isready", "-h", "yb-tserver-0"]
+      start_period: 5s
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    command:
+      - bash
+      - -c
+      - |
+        rm -rf /tmp/.yb*
+        /home/yugabyte/bin/yb-tserver \
+          --ysql_beta_feature_tablespace_alteration=true \
+          --ysql_enable_packed_row=true \
+          --ysql_beta_features=true \
+          --yb_enable_read_committed_isolation=true \
+          --default_memory_limit_to_ram_ratio=0.20 \
+          --placement_cloud=cloud \
+          --placement_region=region \
+          --placement_zone=zone \
+          --enable_ysql=true \
+          --fs_data_dirs=/home/yugabyte/data \
+          --rpc_bind_addresses=yb-tserver-0.zone.region.cloud:9100 \
+          --tserver_master_addrs=yb-master-0:7100,yb-master-1:7100,yb-master-2:7100 \
+          --ysql_num_shards_per_tserver=2 \
+          --rpc_connection_timeout_ms=15000
+
+  yb-tserver-1:
+    image: yugabytedb/yugabyte:2.18.0.1-b4
+    platform: linux/amd64
+    cap_add:
+      - NET_ADMIN
+    container_name: yb-tserver-1
+    hostname: yb-tserver-1.zone.region.cloud
+    restart: unless-stopped
+    ports:
+      - "9001:9000"
+      - "5434:5433"
+    healthcheck:
+      test:
+        ["CMD", "/home/yugabyte/postgres/bin/pg_isready", "-h", "yb-tserver-1"]
+      start_period: 5s
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    command:
+      - bash
+      - -c
+      - |
+        rm -rf /tmp/.yb*
+        /home/yugabyte/bin/yb-tserver \
+          --ysql_beta_feature_tablespace_alteration=true \
+          --ysql_enable_packed_row=true \
+          --ysql_beta_features=true \
+          --yb_enable_read_committed_isolation=true \
+          --default_memory_limit_to_ram_ratio=0.20 \
+          --placement_cloud=cloud \
+          --placement_region=region \
+          --placement_zone=zone \
+          --enable_ysql=true \
+          --fs_data_dirs=/home/yugabyte/data \
+          --rpc_bind_addresses=yb-tserver-1.zone.region.cloud:9100 \
+          --tserver_master_addrs=yb-master-0:7100,yb-master-1:7100,yb-master-2:7100 \
+          --ysql_num_shards_per_tserver=2 \
+          --rpc_connection_timeout_ms=15000
+
+  yb-tserver-2:
+    image: yugabytedb/yugabyte:2.18.0.1-b4
+    platform: linux/amd64
+    cap_add:
+      - NET_ADMIN
+    container_name: yb-tserver-2
+    hostname: yb-tserver-2.zone.region.cloud
+    restart: unless-stopped
+    ports:
+      - "9002:9000"
+      - "5435:5433"
+    healthcheck:
+      test:
+        ["CMD", "/home/yugabyte/postgres/bin/pg_isready", "-h", "yb-tserver-2"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  zookeeper:
+    container_name: zookeeper
+    hostname: zookeeper.zone.region.cloud
+    platform: linux/amd64
+    ports:
+      - '2181:2181'
+      - '2888:2888'
+      - '3888:3888'
+    image: 'debezium/zookeeper:1.7'
+    healthcheck:
+      test: ["CMD", "bash", "-c", "while ! timeout 5 bash -c \"echo > /dev/tcp/localhost/2181\"; do sleep 1; done"]
+      start_period: 5s
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  kafka:
+    container_name: kafka
+    platform: linux/amd64
+    hostname: kafka.zone.region.cloud
+    ports:
+      - '9092:9092'
+    image: 'debezium/kafka:1.7'
+    environment:
+    - "ZOOKEEPER_CONNECT=zookeeper:2181"
+    # healthcheck:
+    #   test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/9092"]
+    #   start_period: 30s
+    #   interval: 10s
+    #   timeout: 5s
+    #   retries: 3
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+  yb-cdc:
+    container_name: yb-cdc
+    hostname: yb-cdc.zone.region.cloud
+    platform: linux/amd64
+    ports:
+      - '8083:8083'
+    environment:
+      - GROUP_ID=1
+      - CONFIG_STORAGE_TOPIC=my_connect_configs
+      - OFFSET_STORAGE_TOPIC=my_connect_offsets
+      - STATUS_STORAGE_TOPIC=my_connect_statuses
+    image: 'quay.io/yugabyte/debezium-connector:latest'
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083"]
+      start_period: 5s
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      - kafka
+  cdc-consumer:
+    container_name: cdc-consumer
+    hostname: cdc-consumer.zone.region.cloud
+    image: debezium/kafka:1.7
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command:
+      - watch-topic
+      - -a
+      - dbserver1.public.test
+  cdc-configurator:
+    image: yugabytedb/yugabyte:2.18.0.1-b4
+    platform: linux/amd64
+    restart: never
+    depends_on:
+      yb-tserver-0:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      yb-cdc:
+        condition: service_healthy
+    command:
+      - bash
+      - -c
+      - |
+        ./bin/ysqlsh -c "create table test (id int primary key, name text, days_worked bigint);"
+        export YB_TSERVER=yb-tserver-0
+        export YB_MASTER=yb-master-0
+        export CDC_STREAM_ID=$$(./bin/yb-admin --master_addresses yb-tserver-0:7100 create_change_data_stream ysql.yugabyte &| sed 's/CDC Stream ID: //')
+
+        export CDC_CONFIG=$$(cat <<-EOF | envsubst
+        {
+            "name": "ybconnector",
+            "config": {
+                "connector.class": "io.debezium.connector.yugabytedb.YugabyteDBConnector",
+                "database.hostname":"$$YB_TSERVER",
+                "database.port":"5433",
+                "database.master.addresses": "$$YB_MASTER:7100",
+                "database.user": "yugabyte",
+                "database.password": "yugabyte",
+                "database.dbname" : "yugabyte",
+                "database.server.name": "dbserver1",
+                "table.include.list":"public.test",
+                "database.streamid":"$$CDC_STREAM_ID",
+                "snapshot.mode":"never"
+            }
+        }
+        EOF
+        )
+        curl -i -X POST \
+          -H "Accept:application/json" \
+          -H "Content-Type:application/json" \
+          yb-cdc:8083/connectors/ \
+          -d "$$CDC_CONFIG"
+  app:
+    image: ghcr.io/yogendra/yb-workload-simu-app
+    container_name: app
+    hostname: app
+    environment:
+        SPRING_DATASOURCE_HIKARI_DATA_SOURCE_PROPERTIES_SERVERNAME: yb-tserver-0
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      yb-master-0:
+        condition: service_healthy
+      yb-master-1:
+        condition: service_healthy
+      yb-master-2:
+        condition: service_healthy
+      yb-tserver-0:
+        condition: service_healthy
+      yb-tserver-1:
+        condition: service_healthy
+      yb-tserver-2:
+        condition: service_healthy
