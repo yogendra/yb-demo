@@ -1,0 +1,14 @@
+{
+  "Servers": {
+      "1": {
+          "Name": "YugabyteDB - Demo",
+          "Group": "Servers",
+          "Port": 5433,
+          "Username": "yugabyte",
+          "Host": "db-lb.local",
+          "SSLMode": "prefer",
+          "MaintenanceDB": "postgres",
+          "PasswordExecCommand": "echo 'yugabyte'"
+      }
+  }
+}
