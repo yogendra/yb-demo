@@ -1,3 +1,5 @@
+version: "3.8"
+
 name: yb-demo
 services:
   wls:
@@ -225,6 +227,22 @@ services:
       interval: 2s
       timeout: 1s
       retries: 10
+    depends_on:
+      db-lb:
+        condition: service_healthy
+  pgadmin4:
+    image: dpage/pgadmin4:7
+    container_name: pdadmin4
+    hostname: pgadmin4.local
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: demo@yugabyte.com
+      PGADMIN_DEFAULT_PASSWORD: demo
+      PGADMIN_LISTEN_PORT: 9080
+    volumes:
+    - ./pgadmin4/servers.json:/pgadmin4/servers.json
+    ports:
+      - "9080:9080"
     depends_on:
       db-lb:
         condition: service_healthy
