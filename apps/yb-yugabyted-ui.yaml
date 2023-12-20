@@ -1,0 +1,148 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: yb-yugabyted-ui
+data:
+  nginx.conf: |
+    user  nginx;
+    worker_processes auto;
+    error_log stderr warn;
+    pid /run/nginx.pid;
+
+    events {
+      worker_connections 1024;
+    }
+    stream {
+        log_format upstreamlog '[$time_local] $remote_addr - $upstream_addr';
+
+        server {
+            listen 7000 so_keepalive=on;
+            proxy_pass masters_web;
+            proxy_connect_timeout 1s;
+            proxy_timeout 30s;
+        }
+        upstream masters_web {
+          server yb-masters:7000 max_fails=2 fail_timeout=30s;
+        }
+
+        server {
+            listen 7100 so_keepalive=on;
+            proxy_pass masters_rpc;
+            proxy_connect_timeout 1s;
+            proxy_timeout 30s;
+        }
+        upstream masters_rpc {
+          server yb-masters:7100 max_fails=2 fail_timeout=30s;
+        }
+
+        server {
+            listen 9000 so_keepalive=on;
+            proxy_pass tservers_web;
+            proxy_connect_timeout 1s;
+            proxy_timeout 30s;
+        }
+        upstream tservers_web {
+          server yb-tservers:9000 max_fails=2 fail_timeout=30s;
+        }
+
+        server {
+            listen 9100 so_keepalive=on;
+            proxy_pass tservers_rpc;
+            proxy_connect_timeout 1s;
+            proxy_timeout 30s;
+        }
+        upstream tservers_rpc {
+          server yb-tservers:9100 max_fails=2 fail_timeout=30s;
+        }
+
+        server {
+            listen 5433 so_keepalive=on;
+            proxy_pass tservers_ysql;
+            proxy_connect_timeout 1s;
+            proxy_timeout 30s;
+        }
+        upstream tservers_ysql {
+          server yb-tservers:5433 max_fails=2 fail_timeout=30s;
+        }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: yb-yugbayted-ui
+  name: yb-yugbayted-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: yb-yugbayted-ui
+  template:
+    metadata:
+      labels:
+        app: yb-yugbayted-ui
+    spec:
+      containers:
+      - image:  nginx:1.25.3
+        name: dbproxy
+        resources:
+          requests:
+            cpu: 200m
+            memory: 200M
+          limits:
+            cpu: 200m
+            memory: 200M
+        ports:
+        - name:  ysql
+          containerPort: 5433
+          protocol: TCP
+        - name:  tsweb
+          containerPort: 9000
+          protocol: TCP
+        - name:  tsrpc
+          containerPort: 9100
+          protocol: TCP
+        - name:  masterweb
+          containerPort: 7000
+          protocol: TCP
+        - name:  masterrpc
+          containerPort: 7100
+          protocol: TCP
+        volumeMounts:
+        - name: nginx-conf
+          mountPath: /etc/nginx
+
+      - image: yugabytedb/yugabyte:2.18.4.2-b2
+        name: yugabyte
+
+        resources:
+          requests:
+            cpu: 200m
+            memory: 200M
+          limits:
+            cpu: 200m
+            memory: 200M
+        ports:
+        - name:  ui
+          containerPort: 15433
+          protocol: TCP
+        command:
+        - /sbin/tini
+        - --
+        args:
+        - /bin/bash
+        - -c
+        - |
+          /home/yugabyte/bin/yugabyted-ui
+
+      volumes:
+      - name: nginx-conf
+        configMap:
+          name: yb-yugabyted-ui
+          items:
+          - key: nginx.conf
+            path: nginx.conf
+
+
+
+
