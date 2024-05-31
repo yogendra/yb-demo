@@ -133,3 +133,9 @@ dmypy.json
 xcluster_ctl_log.txt
 config.json
 universes/
+
+.direnv/
+node_modules/
+.kubeconfig
+gke_gcloud_auth_plugin_cache
+local-cluster
